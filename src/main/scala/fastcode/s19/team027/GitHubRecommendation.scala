@@ -24,6 +24,7 @@ object GitHubRecommendation {
     val userRepoScore = inputData.rdd
       .map(r => ((r.getAs[String]("user"), r.getAs[String]("repo")), computeScore(r.getAs[String]("type"))))
       .reduceByKey(_ + _)
+      .filter { case (_, score) => score >= 10 }
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     val partitioner = new HashPartitioner(1000)
