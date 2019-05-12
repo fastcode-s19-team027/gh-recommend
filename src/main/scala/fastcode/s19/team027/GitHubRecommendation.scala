@@ -1,6 +1,7 @@
 package fastcode.s19.team027
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.storage.StorageLevel
 
 object GitHubRecommendation {
   def computeScore(event: String): Int = event match {
@@ -18,23 +19,22 @@ object GitHubRecommendation {
     val fileName = if (args.length > 0) args(0) else ""
 
     val inputData = spark.read.format("json").load(s"s3a://ph.fastcode.s19.github-data/$fileName")
-    // var inputData = spark.read.format("json").load(s"github-data/$fileName")
-    // inputData.take(10).foreach(println)
+
     val rddData = inputData.rdd
       .map(r => ((r.getAs[String]("user"), r.getAs[String]("repo")), computeScore(r.getAs[String]("type"))))
       .reduceByKey(_+_)
+      .persist(StorageLevel.DISK_ONLY)
 
-    val userData = rddData.map {case ((user, repo), score) => (user, (repo, score))}
-    val user = userData.groupByKey()
+    val userData = rddData.map { case ((user, repo), score) => (user, (repo, score)) } groupByKey
 
     /* similarity (repo1 => (repo2, similarityScore)) */
-    val simData = user.flatMap {
-    	x => val temp = x._2
-    	temp.flatMap {
-    		repo1 => temp.map(repo2 => ((repo1._1, repo2._1), repo1._2 * repo2._2))
+    val simData = userData.flatMap { case (_, repoScore) =>
+      repoScore.flatMap {
+    		repo1 => repoScore.map(repo2 => ((repo1._1, repo2._1), repo1._2 * repo2._2))
     	}
-    }.reduceByKey(_+_)
+    }.reduceByKey(_+_).filter { case (_, score) => score > 0 }
     val similarity = simData.map(x => (x._1._1, (x._1._2, x._2))).groupByKey()
+
     val repoData = rddData.map(x => (x._1._2, (x._1._1, x._2)))
 
     /* result ((user, repo) => recommendationScore) */
