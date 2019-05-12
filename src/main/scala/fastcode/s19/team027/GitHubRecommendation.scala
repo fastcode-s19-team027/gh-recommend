@@ -1,5 +1,6 @@
 package fastcode.s19.team027
 
+import org.apache.spark.HashPartitioner
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -20,33 +21,32 @@ object GitHubRecommendation {
 
     val inputData = spark.read.format("json").load(s"s3a://ph.fastcode.s19.github-data/$fileName")
 
-    val rddData = inputData.rdd
+    val userRepoScore = inputData.rdd
       .map(r => ((r.getAs[String]("user"), r.getAs[String]("repo")), computeScore(r.getAs[String]("type"))))
-      .reduceByKey(_+_)
-      .persist(StorageLevel.DISK_ONLY)
+      .reduceByKey(_ + _)
+      .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    val userData = rddData.map { case ((user, repo), score) => (user, (repo, score)) } groupByKey
+    val partitioner = new HashPartitioner(1000)
+
+    val userData = userRepoScore.map { case ((user, repo), score) => (user, (repo, score)) }
+      .partitionBy(partitioner)
+      .persist(StorageLevel.MEMORY_AND_DISK)
 
     /* similarity (repo1 => (repo2, similarityScore)) */
-    val simData = userData.flatMap { case (_, repoScore) =>
-      repoScore.flatMap {
-    		repo1 => repoScore.map(repo2 => ((repo1._1, repo2._1), repo1._2 * repo2._2))
-    	}
-    }.reduceByKey(_+_).filter { case (_, score) => score > 0 }
-    val similarity = simData.map(x => (x._1._1, (x._1._2, x._2))).groupByKey()
-
-    val repoData = rddData.map(x => (x._1._2, (x._1._1, x._2)))
+    val similarity = userData.join(userData)
+      .map { case (_, ((repo1, score1), (repo2, score2))) => ((repo1, repo2), score1 * score2) }
+      .reduceByKey(_ + _)
+      .map { case ((repo1, repo2), score) => (repo1, (repo2, score)) }
+      .partitionBy(partitioner)
 
     /* result ((user, repo) => recommendationScore) */
-    val recData = repoData.join(similarity)
-    val rec = recData.flatMap {
-    	case (repo, (score, sim)) => {
-    		sim.map(x => ((score._1, x._1), x._2 * score._2))
-    	}
-    }
-    val result = rec.reduceByKey(_+_)
-    val userResult = result.map(x => (x._1._1, (x._1._2,x._2))).groupByKey()
+    val repoData = userRepoScore.map { case ((user, repo), score) => (repo, (user, score)) }
+      .partitionBy(partitioner)
+    val result = repoData.join(similarity)
+      .map { case (_, ((user, score1), (repo, score2))) => ((user, repo), score1 * score2) }
+      .reduceByKey(_+_)
+    val userResult = result.map(x => (x._1._1, (x._1._2, x._2))).groupByKey()
     // userResult.take(10).foreach(println)
-    userResult.map(x => (x._1,x._2.toArray.sortWith(_._2 > _._2).mkString(" "))).saveAsTextFile("s3a://ph.fastcode.s19.gh-output/result")
+    userResult.mapValues(_.toArray.sortWith(_._2 > _._2).mkString(" ")).saveAsTextFile(s"s3a://ph.fastcode.s19.gh-output/result-${System.currentTimeMillis()}")
   }
 }
