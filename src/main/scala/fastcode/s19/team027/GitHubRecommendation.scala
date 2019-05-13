@@ -1,6 +1,6 @@
 package fastcode.s19.team027
 
-import org.apache.spark.HashPartitioner
+import org.apache.spark.{HashPartitioner, SparkConf}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -29,7 +29,11 @@ object GitHubRecommendation {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder
-      .appName("GitHubRecommendation")
+      .config(new SparkConf()
+        .setAppName("GitHubRecommendation")
+        .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        .registerKryoClasses(Array(classOf[mutable.HashMap[String, Long]]))
+      )
       .getOrCreate()
     val sc = spark.sparkContext
 
