@@ -4,8 +4,11 @@ import org.apache.spark.HashPartitioner
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 
+import scala.collection.mutable
+import scala.collection.immutable
+
 object GitHubRecommendation {
-  def computeScore(event: String): Int = event match {
+  def computeScore(event: String): Long = event match {
     case "WatchEvent" => 10
     case "ForkEvent" => 6
     case "IssuesEvent" => 1
@@ -16,6 +19,7 @@ object GitHubRecommendation {
       .builder
       .appName("GitHubRecommendation")
       .getOrCreate()
+    val sc = spark.sparkContext
 
     val fileName = if (args.length > 0) args(0) else ""
 
@@ -33,16 +37,39 @@ object GitHubRecommendation {
       .partitionBy(partitioner)
       .persist(StorageLevel.MEMORY_AND_DISK)
 
-    /* similarity (repo1 => (repo2, similarityScore)) */
-    val similarity = userData.join(userData)
-      .map { case (_, ((repo1, score1), (repo2, score2))) => ((repo1, repo2), score1 * score2) }
-      .reduceByKey(_ + _)
-      .map { case ((repo1, repo2), score) => (repo1, (repo2, score)) }
-      .partitionBy(partitioner)
-
-    /* result ((user, repo) => recommendationScore) */
     val repoData = userRepoScore.map { case ((user, repo), score) => (repo, (user, score)) }
       .partitionBy(partitioner)
+
+    /* similarity (repo1 => (repo2, similarityScore)) */
+//    val similarity = userData.join(userData)
+//      .map { case (_, ((repo1, score1), (repo2, score2))) => ((repo1, repo2), score1 * score2) }
+//      .reduceByKey(_ + _)
+//      .map { case ((repo1, repo2), score) => (repo1, (repo2, score)) }
+//      .partitionBy(partitioner)
+
+//    val similarity = userData.join(userData)
+//      .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
+//      .reduceByKey((m1, m2) => {
+//        for ((k, v) <- m2) {
+//          val newV = m1.getOrElse(k, 0) + v
+//          m1.put(k, newV)
+//        }
+//        m1
+//      })
+//      .flatMapValues { scoreMap => scoreMap.view }
+
+    val similarity = repoData.join(userData)
+      .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
+      .reduceByKey((m1, m2) => {
+        for ((k, v) <- m2) {
+          val newV = m1.getOrElse(k, 0) + v
+          m1.put(k, newV)
+        }
+        m1
+      })
+      .flatMapValues { scoreMap => scoreMap.view }
+
+    /* result ((user, repo) => recommendationScore) */
     val result = repoData.join(similarity)
       .map { case (_, ((user, score1), (repo, score2))) => ((user, repo), score1 * score2) }
       .reduceByKey(_+_)
