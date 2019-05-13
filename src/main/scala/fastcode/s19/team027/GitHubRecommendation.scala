@@ -81,6 +81,6 @@ object GitHubRecommendation {
       .reduceByKey(mergeMap)
       .mapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
     // userResult.take(10).foreach(println)
-    result.mapValues(_.toArray.sortWith(_._2 > _._2).mkString(" ")).saveAsTextFile(s"s3a://ph.fastcode.s19.gh-output/result-${System.currentTimeMillis()}")
+    result.saveAsTextFile(s"s3a://ph.fastcode.s19.gh-output/result-${System.currentTimeMillis()}")
   }
 }
