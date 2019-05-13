@@ -18,6 +18,14 @@ object GitHubRecommendation {
     case "PullRequestEvent" => 2
   }
 
+  def mergeMap(m1: mutable.HashMap[String, Long], m2: mutable.HashMap[String, Long]) = {
+    for ((k, v) <- m2) {
+      val newV = m1.getOrElse(k, 0L) + v
+      m1.put(k, newV)
+    }
+    m1
+  }
+
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder
@@ -64,21 +72,15 @@ object GitHubRecommendation {
 
     val similarity = userData.join(userData)
       .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
-      .reduceByKey((m1, m2) => {
-        for ((k, v) <- m2) {
-          val newV = m1.getOrElse(k, 0L) + v
-          m1.put(k, newV)
-        }
-        m1
-      })
+      .reduceByKey(mergeMap)
       .flatMapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
 
     /* result ((user, repo) => recommendationScore) */
     val result = repoData.join(similarity)
-      .map { case (_, ((user, score1), (repo, score2))) => ((user, repo), score1 * score2) }
-      .reduceByKey(_+_)
-    val userResult = result.map(x => (x._1._1, (x._1._2, x._2))).groupByKey()
+      .map { case (_, ((user, score1), (repo, score2))) => (user, mutable.HashMap(repo -> score1 * score2)) }
+      .reduceByKey(mergeMap)
+      .mapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
     // userResult.take(10).foreach(println)
-    userResult.mapValues(_.toArray.sortWith(_._2 > _._2).mkString(" ")).saveAsTextFile(s"s3a://ph.fastcode.s19.gh-output/result-${System.currentTimeMillis()}")
+    result.mapValues(_.toArray.sortWith(_._2 > _._2).mkString(" ")).saveAsTextFile(s"s3a://ph.fastcode.s19.gh-output/result-${System.currentTimeMillis()}")
   }
 }
