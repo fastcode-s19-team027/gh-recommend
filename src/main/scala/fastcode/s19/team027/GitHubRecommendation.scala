@@ -56,28 +56,17 @@ object GitHubRecommendation {
     val repoData = userRepoScore.map { case ((user, repo), score) => (repo, (user, score)) }
       .partitionBy(partitioner)
 
-    /* similarity (repo1 => (repo2, similarityScore)) */
-//    val similarity = userData.join(userData)
-//      .map { case (_, ((repo1, score1), (repo2, score2))) => ((repo1, repo2), score1 * score2) }
-//      .reduceByKey(_ + _)
-//      .map { case ((repo1, repo2), score) => (repo1, (repo2, score)) }
-//      .partitionBy(partitioner)
+    val similarity = userData.groupByKey().flatMap { case (_, iter) =>
+      for ((repo1, score1) <- iter)
+        yield (repo1, mutable.HashMap(iter.map({ case (repo2, score2) => repo2 -> score1 * score2 }).toSeq: _*))
+    }
+      .reduceByKey(mergeMap)
+      .flatMapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
 
 //    val similarity = userData.join(userData)
 //      .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
-//      .reduceByKey((m1, m2) => {
-//        for ((k, v) <- m2) {
-//          val newV = m1.getOrElse(k, 0) + v
-//          m1.put(k, newV)
-//        }
-//        m1
-//      })
-//      .flatMapValues { scoreMap => scoreMap.view }
-
-    val similarity = userData.join(userData)
-      .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
-      .reduceByKey(mergeMap)
-      .flatMapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
+//      .reduceByKey(mergeMap)
+//      .flatMapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
 
     /* result ((user, repo) => recommendationScore) */
     val result = repoData.join(similarity)
