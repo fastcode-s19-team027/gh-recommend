@@ -62,7 +62,7 @@ object GitHubRecommendation {
       .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
       .reduceByKey((m1, m2) => {
         for ((k, v) <- m2) {
-          val newV = m1.getOrElse(k, 0) + v
+          val newV = m1.getOrElse(k, 0L) + v
           m1.put(k, newV)
         }
         m1
