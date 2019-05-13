@@ -8,12 +8,16 @@ import scala.collection.mutable
 import scala.collection.immutable
 
 object GitHubRecommendation {
+  val MIN_USER_RATING = 10
+  val MAX_REL_REPO = 100
+
   def computeScore(event: String): Long = event match {
     case "WatchEvent" => 10
     case "ForkEvent" => 6
     case "IssuesEvent" => 1
     case "PullRequestEvent" => 2
   }
+
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder
@@ -28,7 +32,7 @@ object GitHubRecommendation {
     val userRepoScore = inputData.rdd
       .map(r => ((r.getAs[String]("user"), r.getAs[String]("repo")), computeScore(r.getAs[String]("type"))))
       .reduceByKey(_ + _)
-      .filter { case (_, score) => score >= 10 }
+      .filter { case (_, score) => score >= MIN_USER_RATING }
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     val partitioner = new HashPartitioner(1000)
@@ -58,7 +62,7 @@ object GitHubRecommendation {
 //      })
 //      .flatMapValues { scoreMap => scoreMap.view }
 
-    val similarity = repoData.join(userData)
+    val similarity = userData.join(userData)
       .map { case (_, ((repo1, score1), (repo2, score2))) => (repo1, mutable.HashMap(repo2 -> score1 * score2)) }
       .reduceByKey((m1, m2) => {
         for ((k, v) <- m2) {
@@ -67,7 +71,7 @@ object GitHubRecommendation {
         }
         m1
       })
-      .flatMapValues { scoreMap => scoreMap.view }
+      .flatMapValues { scoreMap => scoreMap.view.toList.sortBy(_._2)(Ordering[Long].reverse).take(MAX_REL_REPO) }
 
     /* result ((user, repo) => recommendationScore) */
     val result = repoData.join(similarity)
