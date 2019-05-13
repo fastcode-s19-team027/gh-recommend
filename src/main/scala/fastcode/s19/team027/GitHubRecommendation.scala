@@ -29,11 +29,7 @@ object GitHubRecommendation {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder
-      .config(new SparkConf()
-        .setAppName("GitHubRecommendation")
-        .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        .registerKryoClasses(Array(classOf[mutable.HashMap[String, Long]]))
-      )
+      .appName("GitHubRecommendation")
       .getOrCreate()
     val sc = spark.sparkContext
 
